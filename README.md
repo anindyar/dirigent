@@ -7,111 +7,142 @@ Enterprise-grade orchestration for AI coding agents. Self-hosted, simple to depl
 [![npm version](https://img.shields.io/npm/v/diragent.svg)](https://www.npmjs.com/package/diragent)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
+## Why Diragent?
+
+Managing multiple AI coding agents (Claude Code, Codex, Cursor, etc.) across projects is chaos. Diragent brings order:
+
+- **One dashboard** to see all your agents
+- **Spawn agents on demand** with different models and configs
+- **Real-time logs** streaming from every agent
+- **Enterprise controls** - authentication, audit trails, resource limits
+- **Self-hosted** - your infrastructure, your data, full control
+
+## Requirements
+
+- Node.js 20+
+- Linux/macOS (Windows WSL supported)
+- AI agent CLIs installed (e.g., `claude`, `codex`)
+
+## Installation
+
+```bash
+npm install -g diragent
+```
+
 ## Quick Start
 
+### 1. Initialize Workspace
+
 ```bash
-# Install globally
-npm install -g diragent
-
-# Initialize workspace
 diragent init
+```
 
-# Start the server
+This creates a `.dirigent/` folder with:
+- `config.json` - Server configuration
+- `data/` - SQLite database
+- `logs/` - Server logs
+- `workspaces/` - Agent workspaces
+
+**Important:** Save the admin token shown during init - you'll need it for dashboard access.
+
+### 2. Start the Server
+
+```bash
+# Foreground (see logs directly)
 diragent up
 
-# Open dashboard at http://localhost:3000
+# Background (daemon mode)
+diragent up -d
 ```
 
-## Features
+### 3. Access the Dashboard
 
-- 🤖 **Multi-Agent Orchestration** - Spawn, monitor, and coordinate AI agents
-- 🏢 **Enterprise Ready** - Role-based access, audit logs, compliance controls  
-- 🔒 **Self-Hosted** - Your infrastructure, your data, your control
-- 📊 **Real-time Dashboard** - Monitor all agents from a single pane
-- 🔌 **Agent Agnostic** - Works with Claude Code, Codex, and custom agents
-- ⚡ **Simple Install** - One command setup on any Linux VM
+Open **http://localhost:3000** in your browser.
 
-## Architecture
+Login with your admin token (shown during `diragent init`).
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Diragent Dashboard                │
-│            (React + WebSocket Real-time)            │
-└─────────────────────┬───────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────┐
-│                  Control Plane                      │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐  │
-│  │ Auth &  │ │ Agent   │ │ Task    │ │ Audit &  │  │
-│  │ RBAC    │ │ Registry│ │ Router  │ │ Logging  │  │
-│  └─────────┘ └─────────┘ └─────────┘ └──────────┘  │
-└─────────────────────┬───────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────┐
-│                  Agent Runtime                      │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐  │
-│  │ Agent 1 │ │ Agent 2 │ │ Agent 3 │ │ Agent N  │  │
-│  │ (Claude)│ │ (Codex) │ │ (Custom)│ │   ...    │  │
-│  └─────────┘ └─────────┘ └─────────┘ └──────────┘  │
-└─────────────────────────────────────────────────────┘
-```
+The dashboard shows:
+- **Stats** - Total agents, running, idle, errors
+- **Agent List** - All agents with status indicators
+- **Spawn Modal** - Create new agents
+- **Agent Details** - Logs, send messages, stop agents
 
-## CLI Commands
+### 4. Spawn Your First Agent
 
+**Via Dashboard:**
+1. Click "Spawn Agent"
+2. Select template (Claude, Codex, Custom)
+3. Optionally set name, workspace, initial task
+4. Click "Spawn"
+
+**Via CLI:**
 ```bash
-# Initialization
-diragent init              # Initialize workspace (interactive)
-diragent init -y           # Initialize with defaults
+# Spawn a Claude Code agent
+diragent agent spawn claude
 
-# Server Management
-diragent up                # Start server (foreground)
-diragent up -d             # Start server (background)
-diragent down              # Stop server
-diragent status            # Show server status
+# Spawn with custom name and workspace
+diragent agent spawn claude --name my-agent --workspace /path/to/project
 
-# Agent Management
-diragent agent list        # List all agents
-diragent agent spawn claude              # Spawn Claude Code agent
-diragent agent spawn codex               # Spawn Codex agent
-diragent agent spawn claude -n myagent   # Spawn with custom name
-diragent agent spawn claude -t "task"    # Spawn with initial task
-diragent agent stop <id>                 # Stop an agent
-diragent agent send <id> "message"       # Send message to agent
-diragent agent logs <id>                 # View agent logs
-diragent agent logs <id> -f              # Stream agent logs
+# Spawn with an initial task
+diragent agent spawn claude --task "Build a REST API for user management"
 
-# Configuration
-diragent config            # Show config
-diragent config --edit     # Edit config in $EDITOR
-diragent config --set key=value
-
-# Logs
-diragent logs              # View server logs
-diragent logs -f           # Stream server logs
+# Spawn Codex agent
+diragent agent spawn codex
 ```
 
-## Agent Templates
+### 5. Interact with Agents
 
-Built-in templates:
+**Send messages:**
+```bash
+diragent agent send <agent-id> "Add authentication to the API"
+```
 
-| Template | Driver | Description |
-|----------|--------|-------------|
-| `claude` | claude-code | Claude Code CLI agent |
-| `codex` | codex | OpenAI Codex CLI agent |
-| `clawdbot` | clawdbot | Clawdbot headless agent |
-| `custom` | subprocess | Custom command |
+**View logs:**
+```bash
+# Last 50 lines
+diragent agent logs <agent-id>
 
-### Custom Templates
+# Stream logs in real-time
+diragent agent logs <agent-id> -f
+```
 
-Add to `.dirigent/config.json`:
+**Stop an agent:**
+```bash
+diragent agent stop <agent-id>
+```
+
+## Installing AI Agent CLIs
+
+Diragent orchestrates external AI agent CLIs. Install the ones you need:
+
+### Claude Code (Anthropic)
+```bash
+# Via npm
+npm install -g @anthropic-ai/claude-code
+
+# Authenticate
+claude auth
+```
+
+### Codex (OpenAI)
+```bash
+npm install -g @openai/codex
+
+# Set API key
+export OPENAI_API_KEY=your-key
+```
+
+### Custom Agents
+
+Add custom agent templates in `.dirigent/config.json`:
 
 ```json
 {
   "agents": {
     "templates": {
-      "my-agent": {
+      "my-custom-agent": {
         "driver": "subprocess",
-        "command": ["python", "my_agent.py"],
+        "command": ["python", "/path/to/my_agent.py"],
         "env": {
           "MY_API_KEY": "xxx"
         }
@@ -121,46 +152,11 @@ Add to `.dirigent/config.json`:
 }
 ```
 
-## API
-
-REST API available at `http://localhost:3000/api`:
-
-- `GET /api/status` - Server status
-- `GET /api/agents` - List agents
-- `POST /api/agents` - Spawn agent
-- `GET /api/agents/:id` - Get agent details
-- `DELETE /api/agents/:id` - Stop agent
-- `POST /api/agents/:id/send` - Send message
-- `GET /api/agents/:id/logs` - Get logs
-
-WebSocket at `ws://localhost:3000/ws` for real-time updates.
-
-## Client SDK
-
-```typescript
-import { DirigentClient } from 'diragent/client';
-
-const client = new DirigentClient({
-  url: 'http://localhost:3000',
-  token: 'your-admin-token'
-});
-
-// Spawn an agent
-const agent = await client.spawnAgent({
-  template: 'claude',
-  name: 'my-agent',
-  task: 'Build a REST API'
-});
-
-// Subscribe to real-time updates
-await client.connect();
-client.subscribeToAgents();
-client.on('agent:log', (data) => console.log(data));
-```
+Then spawn: `diragent agent spawn my-custom-agent`
 
 ## Configuration
 
-Default config at `.dirigent/config.json`:
+Edit `.dirigent/config.json`:
 
 ```json
 {
@@ -170,11 +166,21 @@ Default config at `.dirigent/config.json`:
   },
   "auth": {
     "enabled": true,
-    "adminToken": "generated-on-init"
+    "adminToken": "your-token-here"
   },
   "agents": {
     "maxConcurrent": 10,
-    "defaultTimeout": 3600
+    "defaultTimeout": 3600,
+    "templates": {
+      "claude": {
+        "driver": "claude-code",
+        "model": "claude-sonnet-4-5"
+      },
+      "codex": {
+        "driver": "codex",
+        "model": "codex-1"
+      }
+    }
   },
   "logging": {
     "level": "info"
@@ -182,13 +188,181 @@ Default config at `.dirigent/config.json`:
 }
 ```
 
+### Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `server.port` | HTTP server port | 3000 |
+| `server.host` | Bind address | 0.0.0.0 |
+| `auth.enabled` | Enable authentication | true |
+| `auth.adminToken` | Admin access token | Generated |
+| `agents.maxConcurrent` | Max simultaneous agents | 10 |
+| `agents.defaultTimeout` | Agent timeout (seconds) | 3600 |
+
+## CLI Reference
+
+```bash
+diragent init [options]      # Initialize workspace
+  -y, --yes                  # Accept defaults
+  --port <port>              # Server port (default: 3000)
+
+diragent up [options]        # Start server
+  -d, --detach               # Run in background
+
+diragent down [options]      # Stop server
+  -f, --force                # Force kill all agents
+
+diragent status [options]    # Show status
+  -j, --json                 # JSON output
+
+diragent agent list          # List agents
+  -a, --all                  # Include stopped
+  -j, --json                 # JSON output
+
+diragent agent spawn <template> [options]
+  -n, --name <name>          # Agent name
+  -w, --workspace <path>     # Working directory
+  -t, --task <task>          # Initial task
+  --model <model>            # Model override
+
+diragent agent stop <id>     # Stop agent
+  -f, --force                # Force kill
+
+diragent agent send <id> <message>  # Send message
+
+diragent agent logs <id>     # View logs
+  -f, --follow               # Stream logs
+  -n, --lines <n>            # Number of lines
+
+diragent logs [options]      # Server logs
+  -f, --follow               # Stream logs
+
+diragent config [options]    # View/edit config
+  --get <key>                # Get value
+  --set <key=value>          # Set value
+  --edit                     # Open in editor
+```
+
+## REST API
+
+Base URL: `http://localhost:3000/api`
+
+All endpoints require `Authorization: Bearer <token>` header.
+
+### Endpoints
+
+```
+GET  /api/status              # Server status and stats
+GET  /api/agents              # List agents (?all=true for stopped)
+POST /api/agents              # Spawn agent
+GET  /api/agents/:id          # Get agent details
+DELETE /api/agents/:id        # Stop agent (?force=true)
+POST /api/agents/:id/send     # Send message
+GET  /api/agents/:id/logs     # Get logs (?lines=100)
+GET  /api/templates           # List available templates
+```
+
+### Example: Spawn via API
+
+```bash
+curl -X POST http://localhost:3000/api/agents \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "template": "claude",
+    "name": "api-builder",
+    "task": "Create a REST API"
+  }'
+```
+
+## WebSocket API
+
+Connect to `ws://localhost:3000/ws` for real-time updates.
+
+```javascript
+const socket = io('http://localhost:3000');
+
+// Authenticate
+socket.emit('auth', { token: 'YOUR_TOKEN' });
+
+// Subscribe to agent updates
+socket.emit('subscribe:agents');
+
+// Subscribe to specific agent logs
+socket.emit('subscribe:logs', { agentId: 'xxx' });
+
+// Listen for events
+socket.on('agent:created', (data) => console.log('New agent:', data));
+socket.on('agent:running', (data) => console.log('Agent started:', data));
+socket.on('agent:stopped', (data) => console.log('Agent stopped:', data));
+socket.on('agent:log', (data) => console.log('Log:', data));
+```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Dashboard                            │
+│              Real-time UI (WebSocket)                       │
+│         http://localhost:3000                               │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│                    Control Plane                            │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │   REST   │ │WebSocket │ │  SQLite  │ │  Auth &  │       │
+│  │   API    │ │  Server  │ │    DB    │ │  Audit   │       │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘       │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+┌─────────────────────────▼───────────────────────────────────┐
+│                    Agent Manager                            │
+│                                                             │
+│   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐       │
+│   │ Claude  │  │  Codex  │  │ Custom  │  │  ....   │       │
+│   │  Agent  │  │  Agent  │  │  Agent  │  │         │       │
+│   └─────────┘  └─────────┘  └─────────┘  └─────────┘       │
+│                                                             │
+│   Each agent runs as a subprocess with:                     │
+│   - Isolated workspace                                      │
+│   - Captured stdout/stderr → logs                           │
+│   - stdin for message passing                               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Troubleshooting
+
+### "Agent not found" error
+The agent may have stopped. Check with `diragent agent list -a` to see all agents including stopped ones.
+
+### Dashboard not loading
+1. Check server is running: `diragent status`
+2. Check port is not in use: `lsof -i :3000`
+3. Check logs: `diragent logs`
+
+### Agent won't spawn
+1. Ensure the agent CLI is installed (e.g., `which claude`)
+2. Check you haven't hit `maxConcurrent` limit
+3. Check agent logs for errors
+
+### Authentication issues
+Your admin token is in `.dirigent/config.json` under `auth.adminToken`.
+
+## Roadmap
+
+- [ ] Multi-node deployment
+- [ ] Agent-to-agent communication
+- [ ] Task queuing and scheduling
+- [ ] Prometheus metrics
+- [ ] RBAC and team management
+- [ ] Kubernetes operator
+
 ## License
 
 Apache 2.0 - Free to use, modify, and distribute.
 
-## Commercial Support
+## Links
 
-Enterprise support, custom integrations, and managed hosting available.
-
-- GitHub: https://github.com/anindyar/dirigent
-- npm: https://www.npmjs.com/package/diragent
+- **npm:** https://www.npmjs.com/package/diragent
+- **GitHub:** https://github.com/anindyar/dirigent
+- **Issues:** https://github.com/anindyar/dirigent/issues
