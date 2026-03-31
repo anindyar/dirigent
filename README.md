@@ -8,8 +8,8 @@ Enterprise-grade orchestration for AI coding agents. Self-hosted, simple to depl
 
 ```bash
 curl -fsSL https://get.dirigent.dev | bash
-dirigent init
-dirigent up
+diragent init
+diragent up
 ```
 
 ## Features

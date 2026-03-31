@@ -1,5 +1,5 @@
 {
-  "name": "dirigent",
+  "name": "diragent",
   "version": "0.1.0",
   "description": "AI Agent Orchestration Platform - Enterprise-grade orchestration for AI coding agents",
   "author": "Anindya Roy <anindya@anindya.me>",
@@ -19,7 +19,7 @@
   ],
   "type": "module",
   "bin": {
-    "dirigent": "./dist/cli/index.js"
+    "diragent": "./dist/cli/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
