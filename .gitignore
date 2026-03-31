@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Build output
+/dist/
+
+# But keep dashboard source
+!src/dashboard/dist/
+
+# Local data
+.dirigent/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test coverage
+coverage/
+
+# TypeScript
+*.tsbuildinfo
