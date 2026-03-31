@@ -1,9 +1,25 @@
 import chalk from 'chalk';
 import ora from 'ora';
-import inquirer from 'inquirer';
+import * as readline from 'readline';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { nanoid } from 'nanoid';
+
+async function prompt(question: string, defaultValue?: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    const q = defaultValue ? `${question} (${defaultValue}): ` : `${question}: `;
+    rl.question(q, (answer) => {
+      rl.close();
+      resolve(answer || defaultValue || '');
+    });
+  });
+}
+
+async function confirm(question: string, defaultValue = true): Promise<boolean> {
+  const answer = await prompt(`${question} (${defaultValue ? 'Y/n' : 'y/N'})`, defaultValue ? 'y' : 'n');
+  return answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
+}
 
 interface InitOptions {
   yes?: boolean;
@@ -58,17 +74,7 @@ export async function initCommand(options: InitOptions) {
 
   // Check if already initialized
   if (existsSync(configPath)) {
-    const { overwrite } = options.yes
-      ? { overwrite: true }
-      : await inquirer.prompt([
-          {
-            type: 'confirm',
-            name: 'overwrite',
-            message: 'Dirigent is already initialized. Overwrite config?',
-            default: false,
-          },
-        ]);
-
+    const overwrite = options.yes ? true : await confirm('Dirigent is already initialized. Overwrite config?', false);
     if (!overwrite) {
       console.log(chalk.yellow('Aborted.'));
       return;
@@ -79,30 +85,13 @@ export async function initCommand(options: InitOptions) {
   let config = { ...DEFAULT_CONFIG };
 
   if (!options.yes) {
-    const answers = await inquirer.prompt([
-      {
-        type: 'number',
-        name: 'port',
-        message: 'Server port:',
-        default: parseInt(options.port || '3000'),
-      },
-      {
-        type: 'confirm',
-        name: 'authEnabled',
-        message: 'Enable authentication?',
-        default: true,
-      },
-      {
-        type: 'number',
-        name: 'maxAgents',
-        message: 'Max concurrent agents:',
-        default: 10,
-      },
-    ]);
+    const portStr = await prompt('Server port', options.port || '3000');
+    const authEnabled = await confirm('Enable authentication?', true);
+    const maxAgentsStr = await prompt('Max concurrent agents', '10');
 
-    config.server.port = answers.port;
-    config.auth.enabled = answers.authEnabled;
-    config.agents.maxConcurrent = answers.maxAgents;
+    config.server.port = parseInt(portStr) || 3000;
+    config.auth.enabled = authEnabled;
+    config.agents.maxConcurrent = parseInt(maxAgentsStr) || 10;
   } else {
     config.server.port = parseInt(options.port || '3000');
   }
