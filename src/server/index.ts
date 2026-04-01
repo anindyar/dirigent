@@ -57,7 +57,7 @@ export async function startServer(options: ServerOptions) {
   initDatabase(dbPath);
 
   // Create Fastify server
-  server = Fastify({ logger });
+  server = Fastify({ loggerInstance: logger });
 
   // Register plugins
   await server.register(fastifyCors, {
