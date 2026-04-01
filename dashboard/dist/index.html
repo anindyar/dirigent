@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dirigent - AI Agent Orchestration</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap');
+    body { font-family: 'Inter', sans-serif; }
+    code, pre, .mono { font-family: 'JetBrains Mono', monospace; }
+    .status-dot { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .log-line { transition: background-color 0.2s; }
+    .log-line:hover { background-color: rgba(255,255,255,0.05); }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+  <div id="app">
+    <!-- Header -->
+    <header class="bg-gray-900 border-b border-gray-800 px-6 py-4">
+      <div class="flex items-center justify-between max-w-7xl mx-auto">
+        <div class="flex items-center gap-3">
+          <span class="text-2xl">🎭</span>
+          <h1 class="text-xl font-bold">Dirigent</h1>
+          <span class="text-sm text-gray-500">AI Agent Orchestration</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <div id="connectionStatus" class="flex items-center gap-2 text-sm">
+            <span class="status-dot w-2 h-2 rounded-full bg-yellow-500"></span>
+            <span class="text-gray-400">Connecting...</span>
+          </div>
+          <div id="serverUptime" class="text-sm text-gray-500"></div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-6 py-8">
+      <!-- Stats -->
+      <div class="grid grid-cols-4 gap-4 mb-8">
+        <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div class="text-3xl font-bold text-white" id="statTotal">0</div>
+          <div class="text-sm text-gray-500">Total Agents</div>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div class="text-3xl font-bold text-green-400" id="statRunning">0</div>
+          <div class="text-sm text-gray-500">Running</div>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div class="text-3xl font-bold text-yellow-400" id="statIdle">0</div>
+          <div class="text-sm text-gray-500">Idle</div>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div class="text-3xl font-bold text-red-400" id="statError">0</div>
+          <div class="text-sm text-gray-500">Errors</div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="flex items-center gap-4 mb-6">
+        <button id="btnSpawn" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium transition-colors">
+          + Spawn Agent
+        </button>
+        <button id="btnRefresh" class="bg-gray-800 hover:bg-gray-700 px-4 py-2 rounded-lg font-medium transition-colors">
+          ↻ Refresh
+        </button>
+      </div>
+
+      <!-- Agents List -->
+      <div class="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+        <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+          <h2 class="font-semibold">Agents</h2>
+          <label class="flex items-center gap-2 text-sm text-gray-400">
+            <input type="checkbox" id="showStopped" class="rounded bg-gray-800 border-gray-700">
+            Show stopped
+          </label>
+        </div>
+        <div id="agentsList" class="divide-y divide-gray-800">
+          <div class="px-4 py-8 text-center text-gray-500">
+            No agents running. Click "Spawn Agent" to create one.
+          </div>
+        </div>
+      </div>
+
+      <!-- Agent Details / Logs -->
+      <div id="agentDetails" class="mt-6 hidden">
+        <div class="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+          <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+            <h2 class="font-semibold">
+              <span id="detailsAgentName">Agent</span>
+              <span id="detailsAgentId" class="text-gray-500 font-normal text-sm ml-2"></span>
+            </h2>
+            <div class="flex items-center gap-2">
+              <button id="btnStopAgent" class="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-sm font-medium transition-colors">
+                Stop
+              </button>
+              <button id="btnCloseDetails" class="text-gray-400 hover:text-white">
+                ✕
+              </button>
+            </div>
+          </div>
+          <div class="p-4">
+            <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+              <div><span class="text-gray-500">Template:</span> <span id="detailsTemplate" class="ml-2"></span></div>
+              <div><span class="text-gray-500">Status:</span> <span id="detailsStatus" class="ml-2"></span></div>
+              <div><span class="text-gray-500">Model:</span> <span id="detailsModel" class="ml-2"></span></div>
+              <div><span class="text-gray-500">PID:</span> <span id="detailsPid" class="ml-2 mono"></span></div>
+              <div class="col-span-2"><span class="text-gray-500">Workspace:</span> <span id="detailsWorkspace" class="ml-2 mono text-xs"></span></div>
+            </div>
+            <div class="flex items-center gap-2 mb-4">
+              <input type="text" id="messageInput" placeholder="Send message to agent..." 
+                class="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-blue-500">
+              <button id="btnSendMessage" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                Send
+              </button>
+            </div>
+            <div class="bg-gray-950 rounded-lg p-4 h-64 overflow-y-auto mono text-xs" id="logsContainer">
+              <div class="text-gray-500">Logs will appear here...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Spawn Modal -->
+    <div id="spawnModal" class="fixed inset-0 bg-black/50 flex items-center justify-center hidden">
+      <div class="bg-gray-900 rounded-lg border border-gray-800 p-6 w-full max-w-md">
+        <h2 class="text-lg font-semibold mb-4">Spawn New Agent</h2>
+        <form id="spawnForm">
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">Template</label>
+              <select id="spawnTemplate" class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500">
+                <option value="claude">Claude Code</option>
+                <option value="codex">Codex</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">Name (optional)</label>
+              <input type="text" id="spawnName" placeholder="my-agent"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">Workspace (optional)</label>
+              <input type="text" id="spawnWorkspace" placeholder="/path/to/workspace"
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500">
+            </div>
+            <div>
+              <label class="block text-sm text-gray-400 mb-1">Initial Task (optional)</label>
+              <textarea id="spawnTask" rows="3" placeholder="Describe the task..."
+                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:border-blue-500"></textarea>
+            </div>
+          </div>
+          <div class="flex justify-end gap-3 mt-6">
+            <button type="button" id="btnCancelSpawn" class="px-4 py-2 rounded-lg text-gray-400 hover:text-white transition-colors">
+              Cancel
+            </button>
+            <button type="submit" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg font-medium transition-colors">
+              Spawn
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let socket = null;
+    let agents = [];
+    let selectedAgentId = null;
+    let token = localStorage.getItem('dirigent_token') || '';
+
+    // Elements
+    const $connectionStatus = document.getElementById('connectionStatus');
+    const $serverUptime = document.getElementById('serverUptime');
+    const $agentsList = document.getElementById('agentsList');
+    const $agentDetails = document.getElementById('agentDetails');
+    const $spawnModal = document.getElementById('spawnModal');
+    const $logsContainer = document.getElementById('logsContainer');
+
+    // API helper
+    async function api(path, options = {}) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      
+      const res = await fetch(`/api${path}`, { ...options, headers });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || res.statusText);
+      }
+      return res.json();
+    }
+
+    // Connect WebSocket
+    function connectWS() {
+      socket = io({ auth: { token } });
+
+      socket.on('connect', () => {
+        updateConnectionStatus(true);
+        socket.emit('subscribe:agents');
+        if (selectedAgentId) {
+          socket.emit('subscribe:logs', { agentId: selectedAgentId });
+        }
+      });
+
+      socket.on('disconnect', () => {
+        updateConnectionStatus(false);
+      });
+
+      socket.on('agent:created', (data) => {
+        agents.push(data.agent);
+        renderAgents();
+      });
+
+      socket.on('agent:running', (data) => {
+        const idx = agents.findIndex(a => a.id === data.agent.id);
+        if (idx >= 0) agents[idx] = data.agent;
+        renderAgents();
+        if (selectedAgentId === data.agent.id) updateDetails(data.agent);
+      });
+
+      socket.on('agent:stopped', (data) => {
+        const idx = agents.findIndex(a => a.id === data.agent.id);
+        if (idx >= 0) agents[idx] = data.agent;
+        renderAgents();
+        if (selectedAgentId === data.agent.id) updateDetails(data.agent);
+      });
+
+      socket.on('agent:error', (data) => {
+        const idx = agents.findIndex(a => a.id === data.agent.id);
+        if (idx >= 0) agents[idx] = data.agent;
+        renderAgents();
+        if (selectedAgentId === data.agent.id) updateDetails(data.agent);
+      });
+
+      socket.on('agent:log', (data) => {
+        if (data.agentId === selectedAgentId) {
+          appendLog(data);
+        }
+      });
+    }
+
+    function updateConnectionStatus(connected) {
+      const dot = $connectionStatus.querySelector('.status-dot');
+      const text = $connectionStatus.querySelector('span:last-child');
+      if (connected) {
+        dot.className = 'status-dot w-2 h-2 rounded-full bg-green-500';
+        text.textContent = 'Connected';
+      } else {
+        dot.className = 'status-dot w-2 h-2 rounded-full bg-red-500';
+        text.textContent = 'Disconnected';
+      }
+    }
+
+    // Load agents
+    async function loadAgents() {
+      try {
+        const includeStopped = document.getElementById('showStopped').checked;
+        const result = await api(`/agents${includeStopped ? '?all=true' : ''}`);
+        agents = result.agents;
+        renderAgents();
+        updateStats();
+      } catch (err) {
+        console.error('Failed to load agents:', err);
+      }
+    }
+
+    // Load status
+    async function loadStatus() {
+      try {
+        const result = await api('/status');
+        document.getElementById('statTotal').textContent = result.agents.total;
+        document.getElementById('statRunning').textContent = result.agents.running;
+        document.getElementById('statIdle').textContent = result.agents.idle;
+        document.getElementById('statError').textContent = result.agents.error;
+        $serverUptime.textContent = `Uptime: ${formatUptime(result.uptime)}`;
+      } catch (err) {
+        console.error('Failed to load status:', err);
+      }
+    }
+
+    function updateStats() {
+      const running = agents.filter(a => a.status === 'running').length;
+      const idle = agents.filter(a => a.status === 'idle').length;
+      const error = agents.filter(a => a.status === 'error').length;
+      document.getElementById('statTotal').textContent = agents.length;
+      document.getElementById('statRunning').textContent = running;
+      document.getElementById('statIdle').textContent = idle;
+      document.getElementById('statError').textContent = error;
+    }
+
+    function formatUptime(seconds) {
+      if (seconds < 60) return `${seconds}s`;
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+      return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+    }
+
+    // Render agents list
+    function renderAgents() {
+      if (agents.length === 0) {
+        $agentsList.innerHTML = `
+          <div class="px-4 py-8 text-center text-gray-500">
+            No agents running. Click "Spawn Agent" to create one.
+          </div>
+        `;
+        return;
+      }
+
+      $agentsList.innerHTML = agents.map(agent => `
+        <div class="px-4 py-3 flex items-center justify-between hover:bg-gray-800/50 cursor-pointer transition-colors"
+             onclick="selectAgent('${agent.id}')">
+          <div class="flex items-center gap-3">
+            <span class="w-2 h-2 rounded-full ${getStatusColor(agent.status)}"></span>
+            <div>
+              <div class="font-medium">${agent.name}</div>
+              <div class="text-sm text-gray-500">${agent.template} • ${agent.id}</div>
+            </div>
+          </div>
+          <div class="text-sm text-gray-500">${agent.status}</div>
+        </div>
+      `).join('');
+    }
+
+    function getStatusColor(status) {
+      switch (status) {
+        case 'running': return 'bg-green-500';
+        case 'starting': return 'bg-blue-500';
+        case 'idle': return 'bg-yellow-500';
+        case 'stopping': return 'bg-orange-500';
+        case 'stopped': return 'bg-gray-500';
+        case 'error': return 'bg-red-500';
+        default: return 'bg-gray-500';
+      }
+    }
+
+    // Select agent
+    async function selectAgent(id) {
+      selectedAgentId = id;
+      const agent = agents.find(a => a.id === id);
+      if (!agent) return;
+
+      updateDetails(agent);
+      $agentDetails.classList.remove('hidden');
+
+      // Subscribe to logs
+      if (socket) {
+        socket.emit('subscribe:logs', { agentId: id });
+      }
+
+      // Load existing logs
+      try {
+        const result = await api(`/agents/${id}/logs?lines=100`);
+        $logsContainer.innerHTML = '';
+        result.logs.forEach(log => appendLog(log));
+      } catch (err) {
+        console.error('Failed to load logs:', err);
+      }
+    }
+
+    function updateDetails(agent) {
+      document.getElementById('detailsAgentName').textContent = agent.name;
+      document.getElementById('detailsAgentId').textContent = agent.id;
+      document.getElementById('detailsTemplate').textContent = agent.template;
+      document.getElementById('detailsStatus').textContent = agent.status;
+      document.getElementById('detailsModel').textContent = agent.model || 'default';
+      document.getElementById('detailsPid').textContent = agent.pid || '-';
+      document.getElementById('detailsWorkspace').textContent = agent.workspace || '-';
+    }
+
+    function appendLog(log) {
+      const time = new Date(log.timestamp).toISOString().split('T')[1].slice(0, 8);
+      const levelClass = log.level === 'error' ? 'text-red-400' : log.level === 'warn' ? 'text-yellow-400' : 'text-gray-400';
+      const line = document.createElement('div');
+      line.className = 'log-line py-0.5';
+      line.innerHTML = `<span class="text-gray-600">${time}</span> <span class="${levelClass}">${log.level.toUpperCase().padEnd(5)}</span> ${escapeHtml(log.message)}`;
+      $logsContainer.appendChild(line);
+      $logsContainer.scrollTop = $logsContainer.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Event handlers
+    document.getElementById('btnSpawn').onclick = () => {
+      $spawnModal.classList.remove('hidden');
+    };
+
+    document.getElementById('btnCancelSpawn').onclick = () => {
+      $spawnModal.classList.add('hidden');
+    };
+
+    document.getElementById('spawnForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const template = document.getElementById('spawnTemplate').value;
+      const name = document.getElementById('spawnName').value || undefined;
+      const workspace = document.getElementById('spawnWorkspace').value || undefined;
+      const task = document.getElementById('spawnTask').value || undefined;
+
+      try {
+        await api('/agents', {
+          method: 'POST',
+          body: JSON.stringify({ template, name, workspace, task }),
+        });
+        $spawnModal.classList.add('hidden');
+        document.getElementById('spawnForm').reset();
+      } catch (err) {
+        alert('Failed to spawn agent: ' + err.message);
+      }
+    };
+
+    document.getElementById('btnRefresh').onclick = () => {
+      loadAgents();
+      loadStatus();
+    };
+
+    document.getElementById('showStopped').onchange = loadAgents;
+
+    document.getElementById('btnCloseDetails').onclick = () => {
+      if (socket && selectedAgentId) {
+        socket.emit('unsubscribe:logs', { agentId: selectedAgentId });
+      }
+      selectedAgentId = null;
+      $agentDetails.classList.add('hidden');
+    };
+
+    document.getElementById('btnStopAgent').onclick = async () => {
+      if (!selectedAgentId) return;
+      if (!confirm('Stop this agent?')) return;
+      try {
+        await api(`/agents/${selectedAgentId}`, { method: 'DELETE' });
+      } catch (err) {
+        alert('Failed to stop agent: ' + err.message);
+      }
+    };
+
+    document.getElementById('btnSendMessage').onclick = async () => {
+      const input = document.getElementById('messageInput');
+      const message = input.value.trim();
+      if (!message || !selectedAgentId) return;
+
+      try {
+        await api(`/agents/${selectedAgentId}/send`, {
+          method: 'POST',
+          body: JSON.stringify({ message }),
+        });
+        input.value = '';
+      } catch (err) {
+        alert('Failed to send message: ' + err.message);
+      }
+    };
+
+    document.getElementById('messageInput').onkeydown = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        document.getElementById('btnSendMessage').click();
+      }
+    };
+
+    // Init
+    connectWS();
+    loadStatus();
+    loadAgents();
+    setInterval(loadStatus, 30000);
+  </script>
+</body>
+</html>

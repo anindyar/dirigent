@@ -36,7 +36,8 @@
   "files": [
     "dist",
     "scripts",
-    "config"
+    "config",
+    "dashboard"
   ],
   "scripts": {
     "build": "tsup",
