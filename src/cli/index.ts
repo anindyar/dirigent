@@ -4,6 +4,9 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import boxen from 'boxen';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { initCommand } from './commands/init.js';
 import { upCommand } from './commands/up.js';
 import { downCommand } from './commands/down.js';
@@ -12,7 +15,12 @@ import { agentCommand } from './commands/agent.js';
 import { logsCommand } from './commands/logs.js';
 import { configCommand } from './commands/config.js';
 
-const version = '0.1.0';
+// Read version from package.json dynamically
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const pkgPath = join(__dirname, '..', '..', 'package.json');
+const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+const version = pkg.version;
 
 const program = new Command();
 
