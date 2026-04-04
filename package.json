@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/anindyar/dirigent"
+    "url": "git+https://github.com/anindyar/dirigent.git"
   },
   "keywords": [
     "ai",
@@ -19,7 +19,7 @@
   ],
   "type": "module",
   "bin": {
-    "diragent": "./dist/cli/index.js"
+    "diragent": "dist/cli/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
