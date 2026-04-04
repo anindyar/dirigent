@@ -8,6 +8,12 @@ import {
   getConnectedAgent,
   getConnectedAgentStats,
   updateConnectedAgentStatus,
+  getTools,
+  getTool,
+  createTool,
+  updateTool,
+  deleteTool,
+  type RiskLevel,
 } from '../db/index.js';
 
 interface RouteOptions {
@@ -253,6 +259,91 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
     }
     updateConnectedAgentStatus(request.params.id, 'offline');
     audit('agent.deregistered', 'admin', 'connected_agent', request.params.id, {});
+    return { ok: true };
+  });
+
+  // ── Tool Catalog ──────────────────────────────────────────────────────────────
+
+  const VALID_RISK_LEVELS: RiskLevel[] = ['critical', 'high', 'medium', 'low'];
+
+  // List all tools
+  server.get('/api/tools', async () => {
+    return { tools: getTools() };
+  });
+
+  // Get single tool
+  server.get<{ Params: { id: string } }>('/api/tools/:id', async (request, reply) => {
+    const tool = getTool(request.params.id);
+    if (!tool) {
+      reply.code(404).send({ error: 'Tool not found' });
+      return;
+    }
+    return { tool };
+  });
+
+  // Create tool
+  server.post<{
+    Body: {
+      id: string;
+      name: string;
+      description: string;
+      risk_level: RiskLevel;
+      default_scope?: object;
+    };
+  }>('/api/tools', async (request, reply) => {
+    const { id, name, description, risk_level, default_scope } = request.body;
+
+    if (!id || !name || !description || !risk_level) {
+      reply.code(400).send({ error: 'id, name, description, and risk_level are required' });
+      return;
+    }
+    if (!VALID_RISK_LEVELS.includes(risk_level)) {
+      reply.code(400).send({ error: `risk_level must be one of: ${VALID_RISK_LEVELS.join(', ')}` });
+      return;
+    }
+    if (getTool(id)) {
+      reply.code(409).send({ error: `Tool '${id}' already exists` });
+      return;
+    }
+
+    const tool = createTool({ id, name, description, risk_level, default_scope });
+    audit('tool.created', 'admin', 'tool', id, { name, risk_level });
+    reply.code(201).send({ tool });
+  });
+
+  // Update tool
+  server.put<{
+    Params: { id: string };
+    Body: {
+      name?: string;
+      description?: string;
+      risk_level?: RiskLevel;
+      default_scope?: object;
+    };
+  }>('/api/tools/:id', async (request, reply) => {
+    if (!getTool(request.params.id)) {
+      reply.code(404).send({ error: 'Tool not found' });
+      return;
+    }
+    const { risk_level } = request.body;
+    if (risk_level && !VALID_RISK_LEVELS.includes(risk_level)) {
+      reply.code(400).send({ error: `risk_level must be one of: ${VALID_RISK_LEVELS.join(', ')}` });
+      return;
+    }
+
+    const tool = updateTool(request.params.id, request.body);
+    audit('tool.updated', 'admin', 'tool', request.params.id, request.body);
+    return { tool };
+  });
+
+  // Delete tool
+  server.delete<{ Params: { id: string } }>('/api/tools/:id', async (request, reply) => {
+    if (!getTool(request.params.id)) {
+      reply.code(404).send({ error: 'Tool not found' });
+      return;
+    }
+    deleteTool(request.params.id);
+    audit('tool.deleted', 'admin', 'tool', request.params.id, {});
     return { ok: true };
   });
 

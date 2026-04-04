@@ -84,6 +84,17 @@ export function initDatabase(path: string): Database.Database {
       metadata TEXT
     );
 
+    -- Tool catalog (admin-defined tools that can be granted to agents)
+    CREATE TABLE IF NOT EXISTS tools (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL,
+      risk_level TEXT NOT NULL DEFAULT 'medium',
+      default_scope TEXT,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+      updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_agent_logs_agent_id ON agent_logs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_agent_logs_timestamp ON agent_logs(timestamp);
@@ -92,9 +103,86 @@ export function initDatabase(path: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
     CREATE INDEX IF NOT EXISTS idx_connected_agents_status ON connected_agents(status);
     CREATE INDEX IF NOT EXISTS idx_connected_agents_last_seen ON connected_agents(last_seen);
+    CREATE INDEX IF NOT EXISTS idx_tools_risk_level ON tools(risk_level);
   `);
 
+  seedTools();
+
   return db;
+}
+
+function seedTools() {
+  const count = (db!.prepare('SELECT COUNT(*) as n FROM tools').get() as { n: number }).n;
+  if (count > 0) return;
+
+  const insert = db!.prepare(`
+    INSERT INTO tools (id, name, description, risk_level, default_scope)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  const tools = [
+    {
+      id: 'exec',
+      name: 'Shell Execution',
+      description: 'Execute shell commands and scripts on the host system.',
+      risk_level: 'critical',
+      default_scope: {
+        blocked_commands: ['rm -rf /', 'sudo', 'mkfs', 'dd if='],
+        allowed_paths: [],
+      },
+    },
+    {
+      id: 'file_read',
+      name: 'File Read',
+      description: 'Read files from the filesystem.',
+      risk_level: 'medium',
+      default_scope: {
+        blocked_paths: ['/etc/shadow', '/etc/passwd', '~/.ssh'],
+      },
+    },
+    {
+      id: 'file_write',
+      name: 'File Write',
+      description: 'Write or modify files on the filesystem.',
+      risk_level: 'high',
+      default_scope: {
+        blocked_paths: ['/etc', '/usr', '/bin', '/sbin'],
+      },
+    },
+    {
+      id: 'web_fetch',
+      name: 'Web Fetch',
+      description: 'Make HTTP requests to external URLs.',
+      risk_level: 'medium',
+      default_scope: {
+        blocked_domains: [],
+        allowed_methods: ['GET', 'POST'],
+      },
+    },
+    {
+      id: 'browser',
+      name: 'Browser Control',
+      description: 'Control a headless browser for web automation.',
+      risk_level: 'high',
+      default_scope: {
+        blocked_domains: [],
+      },
+    },
+    {
+      id: 'message',
+      name: 'Send Message',
+      description: 'Send messages to other agents or external services.',
+      risk_level: 'low',
+      default_scope: {},
+    },
+  ];
+
+  const insertMany = db!.transaction(() => {
+    for (const t of tools) {
+      insert.run(t.id, t.name, t.description, t.risk_level, JSON.stringify(t.default_scope));
+    }
+  });
+  insertMany();
 }
 
 export function getDatabase(): Database.Database | null {
@@ -304,4 +392,84 @@ export function getConnectedAgentStats(): { total: number; online: number; idle:
     idle: row.idle ?? 0,
     offline: row.offline ?? 0,
   };
+}
+
+// ── Tool Catalog ─────────────────────────────────────────────────────────────
+
+export type RiskLevel = 'critical' | 'high' | 'medium' | 'low';
+
+export interface ToolRow {
+  id: string;
+  name: string;
+  description: string;
+  risk_level: RiskLevel;
+  default_scope: object | null;
+  created_at: number;
+  updated_at: number;
+}
+
+function parseTool(row: any): ToolRow {
+  return {
+    ...row,
+    default_scope: row.default_scope ? JSON.parse(row.default_scope) : null,
+  };
+}
+
+export function getTools(): ToolRow[] {
+  return (db!.prepare('SELECT * FROM tools ORDER BY risk_level, id').all() as any[]).map(parseTool);
+}
+
+export function getTool(id: string): ToolRow | null {
+  const row = db!.prepare('SELECT * FROM tools WHERE id = ?').get(id) as any;
+  return row ? parseTool(row) : null;
+}
+
+export function createTool(tool: {
+  id: string;
+  name: string;
+  description: string;
+  risk_level: RiskLevel;
+  default_scope?: object;
+}): ToolRow {
+  db!.prepare(`
+    INSERT INTO tools (id, name, description, risk_level, default_scope)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(
+    tool.id,
+    tool.name,
+    tool.description,
+    tool.risk_level,
+    tool.default_scope ? JSON.stringify(tool.default_scope) : null,
+  );
+  return getTool(tool.id)!;
+}
+
+export function updateTool(
+  id: string,
+  updates: Partial<Pick<ToolRow, 'name' | 'description' | 'risk_level' | 'default_scope'>>,
+): ToolRow | null {
+  const fields: string[] = [];
+  const values: any[] = [];
+
+  if (updates.name !== undefined)        { fields.push('name = ?');          values.push(updates.name); }
+  if (updates.description !== undefined) { fields.push('description = ?');   values.push(updates.description); }
+  if (updates.risk_level !== undefined)  { fields.push('risk_level = ?');    values.push(updates.risk_level); }
+  if (updates.default_scope !== undefined) {
+    fields.push('default_scope = ?');
+    values.push(JSON.stringify(updates.default_scope));
+  }
+
+  if (fields.length === 0) return getTool(id);
+
+  fields.push('updated_at = ?');
+  values.push(Date.now());
+  values.push(id);
+
+  db!.prepare(`UPDATE tools SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  return getTool(id);
+}
+
+export function deleteTool(id: string): boolean {
+  const result = db!.prepare('DELETE FROM tools WHERE id = ?').run(id);
+  return result.changes > 0;
 }
