@@ -28,10 +28,11 @@ interface RouteOptions {
   agentManager: AgentManager;
   startTime: number;
   pushManifest: (agentId: string) => void;
+  sendCommand: (agentId: string, command: 'kill' | 'pause' | 'resume') => boolean;
 }
 
 export function registerApiRoutes(server: FastifyInstance, options: RouteOptions) {
-  const { config, agentManager, startTime, pushManifest } = options;
+  const { config, agentManager, startTime, pushManifest, sendCommand } = options;
 
   // Auth middleware
   server.addHook('onRequest', async (request, reply) => {
@@ -269,6 +270,38 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
     audit('agent.deregistered', 'admin', 'connected_agent', request.params.id, {});
     return { ok: true };
   });
+
+  // ── Real-time control ─────────────────────────────────────────────────────────
+
+  function makeControlHandler(command: 'kill' | 'pause' | 'resume') {
+    return async (request: any, reply: any) => {
+      const agentId = request.params.id;
+      if (!getConnectedAgent(agentId)) {
+        reply.code(404).send({ error: 'Agent not found' });
+        return;
+      }
+
+      const delivered = sendCommand(agentId, command);
+      audit(`agent.${command}`, 'admin', 'connected_agent', agentId, { delivered });
+
+      return { ok: true, delivered };
+    };
+  }
+
+  server.post<{ Params: { id: string } }>(
+    '/api/agents/connected/:id/kill',
+    makeControlHandler('kill'),
+  );
+
+  server.post<{ Params: { id: string } }>(
+    '/api/agents/connected/:id/pause',
+    makeControlHandler('pause'),
+  );
+
+  server.post<{ Params: { id: string } }>(
+    '/api/agents/connected/:id/resume',
+    makeControlHandler('resume'),
+  );
 
   // ── Permission Matrix ─────────────────────────────────────────────────────────
 

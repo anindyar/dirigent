@@ -32,9 +32,13 @@ const AGENT_TIMEOUT_MS = 60_000;
 // How often we sweep for stale agents (ms)
 const STALE_SWEEP_INTERVAL_MS = 30_000;
 
+export type AgentCommand = 'kill' | 'pause' | 'resume';
+
 export interface WSRegistry {
   /** Push an updated manifest to a connected agent (called after permission changes). */
   pushManifest: (agentId: string) => void;
+  /** Send a control command to a connected agent and update its status. */
+  sendCommand: (agentId: string, command: AgentCommand) => boolean;
 }
 
 export function registerWebSocket(server: FastifyInstance, options: WSOptions): WSRegistry {
@@ -217,6 +221,32 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions): 
     });
   }
 
+  // ── Control commands (kill / pause / resume) ─────────────────────────────────
+  function sendCommand(agentId: string, command: AgentCommand): boolean {
+    let delivered = false;
+
+    for (const client of clients.values()) {
+      if (client.agentId === agentId) {
+        send(client.ws, { type: 'command', command });
+        delivered = true;
+        break;
+      }
+    }
+
+    // Update status in DB regardless of delivery (agent may already be gone)
+    const newStatus =
+      command === 'pause'  ? 'paused'  :
+      command === 'resume' ? 'online'  :
+      /* kill */             'offline';
+    updateConnectedAgentStatus(agentId, newStatus);
+
+    // Notify dashboard
+    const agent = getConnectedAgent(agentId);
+    broadcast('agents', { type: 'agent:command', agentId, command, agent });
+
+    return delivered;
+  }
+
   // ── Spawned agent event handlers (existing) ─────────────────────────────────
   agentManager.on('agent:created', (agent) => {
     broadcast('agents', { type: 'agent:created', agent: sanitizeSpawnedAgent(agent) });
@@ -283,5 +313,5 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions): 
     };
   }
 
-  return { pushManifest };
+  return { pushManifest, sendCommand };
 }

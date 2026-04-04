@@ -93,7 +93,7 @@ export async function startServer(options: ServerOptions) {
   });
 
   // WebSocket must be registered before routes so pushManifest is available
-  const { pushManifest } = registerWebSocket(server, {
+  const { pushManifest, sendCommand } = registerWebSocket(server, {
     config,
     agentManager,
     privateKey: keys?.privateKey ?? null,
@@ -105,6 +105,7 @@ export async function startServer(options: ServerOptions) {
     agentManager,
     startTime,
     pushManifest,
+    sendCommand,
   });
 
   // Health check

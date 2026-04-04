@@ -374,7 +374,7 @@ export interface ConnectedAgentRow {
   type: string;
   version: string | null;
   capabilities: string[] | null;
-  status: 'online' | 'idle' | 'offline';
+  status: 'online' | 'idle' | 'offline' | 'paused';
   connected_at: number;
   last_seen: number;
   metadata: object | null;
@@ -419,20 +419,23 @@ export function updateConnectedAgentHeartbeat(id: string, status: 'online' | 'id
   `).run(Date.now(), status, id);
 }
 
-export function updateConnectedAgentStatus(id: string, status: 'online' | 'idle' | 'offline'): void {
+export function updateConnectedAgentStatus(id: string, status: 'online' | 'idle' | 'offline' | 'paused'): void {
   db!.prepare(`
     UPDATE connected_agents SET status = ? WHERE id = ?
   `).run(status, id);
 }
 
 export function markStaleAgentsOffline(lastSeenBefore: number): string[] {
+  // Paused agents intentionally stop sending heartbeats — exclude them from sweep
   const stale = db!.prepare(`
-    SELECT id FROM connected_agents WHERE status != 'offline' AND last_seen < ?
+    SELECT id FROM connected_agents
+    WHERE status NOT IN ('offline', 'paused') AND last_seen < ?
   `).all(lastSeenBefore) as { id: string }[];
 
   if (stale.length > 0) {
     db!.prepare(`
-      UPDATE connected_agents SET status = 'offline' WHERE status != 'offline' AND last_seen < ?
+      UPDATE connected_agents SET status = 'offline'
+      WHERE status NOT IN ('offline', 'paused') AND last_seen < ?
     `).run(lastSeenBefore);
   }
 
@@ -462,19 +465,21 @@ export function getConnectedAgent(id: string): ConnectedAgentRow | null {
   };
 }
 
-export function getConnectedAgentStats(): { total: number; online: number; idle: number; offline: number } {
+export function getConnectedAgentStats(): { total: number; online: number; idle: number; paused: number; offline: number } {
   const row = db!.prepare(`
     SELECT
       COUNT(*) as total,
-      SUM(CASE WHEN status = 'online' THEN 1 ELSE 0 END) as online,
-      SUM(CASE WHEN status = 'idle' THEN 1 ELSE 0 END) as idle,
+      SUM(CASE WHEN status = 'online'  THEN 1 ELSE 0 END) as online,
+      SUM(CASE WHEN status = 'idle'    THEN 1 ELSE 0 END) as idle,
+      SUM(CASE WHEN status = 'paused'  THEN 1 ELSE 0 END) as paused,
       SUM(CASE WHEN status = 'offline' THEN 1 ELSE 0 END) as offline
     FROM connected_agents
   `).get() as any;
   return {
-    total: row.total ?? 0,
-    online: row.online ?? 0,
-    idle: row.idle ?? 0,
+    total:   row.total   ?? 0,
+    online:  row.online  ?? 0,
+    idle:    row.idle    ?? 0,
+    paused:  row.paused  ?? 0,
     offline: row.offline ?? 0,
   };
 }
