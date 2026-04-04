@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dirigent - AI Agent Orchestration</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap');
     body { font-family: 'Inter', sans-serif; }
@@ -68,10 +67,32 @@
         </button>
       </div>
 
-      <!-- Agents List -->
+      <!-- Connected Agents (self-registered) -->
+      <div class="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden mb-6">
+        <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="font-semibold">Connected Agents</h2>
+            <span class="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded-full">self-registered</span>
+          </div>
+          <label class="flex items-center gap-2 text-sm text-gray-400">
+            <input type="checkbox" id="showOffline" class="rounded bg-gray-800 border-gray-700">
+            Show offline
+          </label>
+        </div>
+        <div id="connectedAgentsList" class="divide-y divide-gray-800">
+          <div class="px-4 py-6 text-center text-gray-500 text-sm">
+            No agents connected. Agents connect via <code class="text-gray-400 bg-gray-800 px-1 rounded">ws://host/ws</code> with a <code class="text-gray-400 bg-gray-800 px-1 rounded">register</code> message.
+          </div>
+        </div>
+      </div>
+
+      <!-- Spawned Agents -->
       <div class="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
         <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
-          <h2 class="font-semibold">Agents</h2>
+          <div class="flex items-center gap-2">
+            <h2 class="font-semibold">Spawned Agents</h2>
+            <span class="text-xs text-gray-500 bg-gray-800 px-2 py-0.5 rounded-full">subprocess</span>
+          </div>
           <label class="flex items-center gap-2 text-sm text-gray-400">
             <input type="checkbox" id="showStopped" class="rounded bg-gray-800 border-gray-700">
             Show stopped
@@ -171,6 +192,7 @@
     // State
     let socket = null;
     let agents = [];
+    let connectedAgents = [];
     let selectedAgentId = null;
     let token = localStorage.getItem('dirigent_token') || '';
 
@@ -195,53 +217,88 @@
       return res.json();
     }
 
-    // Connect WebSocket
+    // Connect WebSocket (native ws, no socket.io)
     function connectWS() {
-      socket = io({ auth: { token } });
+      const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new WebSocket(`${wsProto}//${location.host}/ws`);
 
-      socket.on('connect', () => {
-        updateConnectionStatus(true);
-        socket.emit('subscribe:agents');
-        if (selectedAgentId) {
-          socket.emit('subscribe:logs', { agentId: selectedAgentId });
-        }
-      });
+      socket.onopen = () => {
+        // Authenticate
+        wsSend({ type: 'auth', token });
+      };
 
-      socket.on('disconnect', () => {
+      socket.onclose = () => {
         updateConnectionStatus(false);
-      });
+        // Reconnect after 3s
+        setTimeout(connectWS, 3000);
+      };
 
-      socket.on('agent:created', (data) => {
-        agents.push(data.agent);
-        renderAgents();
-      });
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleWSMessage(msg);
+        } catch {}
+      };
+    }
 
-      socket.on('agent:running', (data) => {
-        const idx = agents.findIndex(a => a.id === data.agent.id);
-        if (idx >= 0) agents[idx] = data.agent;
-        renderAgents();
-        if (selectedAgentId === data.agent.id) updateDetails(data.agent);
-      });
+    function wsSend(msg) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify(msg));
+      }
+    }
 
-      socket.on('agent:stopped', (data) => {
-        const idx = agents.findIndex(a => a.id === data.agent.id);
-        if (idx >= 0) agents[idx] = data.agent;
-        renderAgents();
-        if (selectedAgentId === data.agent.id) updateDetails(data.agent);
-      });
+    function handleWSMessage(msg) {
+      switch (msg.type) {
+        case 'auth':
+          if (msg.success) {
+            updateConnectionStatus(true);
+            wsSend({ type: 'subscribe:agents' });
+            if (selectedAgentId) wsSend({ type: 'subscribe:logs', agentId: selectedAgentId });
+          }
+          break;
 
-      socket.on('agent:error', (data) => {
-        const idx = agents.findIndex(a => a.id === data.agent.id);
-        if (idx >= 0) agents[idx] = data.agent;
-        renderAgents();
-        if (selectedAgentId === data.agent.id) updateDetails(data.agent);
-      });
+        case 'agent:created':
+          agents.push(msg.agent);
+          renderAgents();
+          updateStats();
+          break;
 
-      socket.on('agent:log', (data) => {
-        if (data.agentId === selectedAgentId) {
-          appendLog(data);
+        case 'agent:running':
+        case 'agent:stopped':
+        case 'agent:error': {
+          const idx = agents.findIndex(a => a.id === msg.agent.id);
+          if (idx >= 0) agents[idx] = msg.agent; else agents.push(msg.agent);
+          renderAgents();
+          updateStats();
+          if (selectedAgentId === msg.agent.id) updateDetails(msg.agent);
+          break;
         }
-      });
+
+        case 'agent:connected': {
+          const idx = connectedAgents.findIndex(a => a.id === msg.agent.id);
+          if (idx >= 0) connectedAgents[idx] = msg.agent; else connectedAgents.push(msg.agent);
+          renderConnectedAgents();
+          break;
+        }
+
+        case 'agent:heartbeat': {
+          const idx = connectedAgents.findIndex(a => a.id === msg.agent.id);
+          if (idx >= 0) connectedAgents[idx] = msg.agent;
+          renderConnectedAgents();
+          break;
+        }
+
+        case 'agent:disconnected': {
+          const idx = connectedAgents.findIndex(a => a.id === msg.agentId);
+          if (idx >= 0) connectedAgents[idx].status = 'offline';
+          renderConnectedAgents();
+          break;
+        }
+
+        case 'agent:log':
+          if (msg.agentId === selectedAgentId) appendLog(msg);
+          break;
+      }
     }
 
     function updateConnectionStatus(connected) {
@@ -256,7 +313,7 @@
       }
     }
 
-    // Load agents
+    // Load spawned agents
     async function loadAgents() {
       try {
         const includeStopped = document.getElementById('showStopped').checked;
@@ -267,6 +324,56 @@
       } catch (err) {
         console.error('Failed to load agents:', err);
       }
+    }
+
+    // Load connected (self-registered) agents
+    async function loadConnectedAgents() {
+      try {
+        const includeOffline = document.getElementById('showOffline').checked;
+        const result = await api(`/agents/connected${includeOffline ? '?all=true' : ''}`);
+        connectedAgents = result.agents;
+        renderConnectedAgents();
+      } catch (err) {
+        console.error('Failed to load connected agents:', err);
+      }
+    }
+
+    function renderConnectedAgents() {
+      const showOffline = document.getElementById('showOffline').checked;
+      const list = showOffline ? connectedAgents : connectedAgents.filter(a => a.status !== 'offline');
+      const $list = document.getElementById('connectedAgentsList');
+
+      if (list.length === 0) {
+        $list.innerHTML = `
+          <div class="px-4 py-6 text-center text-gray-500 text-sm">
+            No agents connected. Agents connect via <code class="text-gray-400 bg-gray-800 px-1 rounded">ws://host/ws</code> with a <code class="text-gray-400 bg-gray-800 px-1 rounded">register</code> message.
+          </div>`;
+        return;
+      }
+
+      $list.innerHTML = list.map(agent => {
+        const dotColor = agent.status === 'online' ? 'bg-green-500' :
+                         agent.status === 'idle'   ? 'bg-yellow-500' : 'bg-gray-500';
+        const lastSeen = agent.last_seen
+          ? new Date(agent.last_seen).toISOString().replace('T', ' ').slice(0, 19) + ' UTC'
+          : '—';
+        const caps = (agent.capabilities || []).join(', ') || '—';
+        return `
+          <div class="px-4 py-3 flex items-center justify-between hover:bg-gray-800/50 transition-colors">
+            <div class="flex items-center gap-3">
+              <span class="w-2 h-2 rounded-full ${dotColor} flex-shrink-0"></span>
+              <div>
+                <div class="font-medium">${escapeHtml(agent.name)}</div>
+                <div class="text-xs text-gray-500">${escapeHtml(agent.type)}${agent.version ? ' v' + escapeHtml(agent.version) : ''} &bull; ${escapeHtml(agent.id)}</div>
+                <div class="text-xs text-gray-600 mt-0.5">caps: ${escapeHtml(caps)}</div>
+              </div>
+            </div>
+            <div class="text-right text-xs text-gray-500">
+              <div class="${agent.status === 'online' ? 'text-green-400' : agent.status === 'idle' ? 'text-yellow-400' : 'text-gray-500'}">${agent.status}</div>
+              <div class="mt-0.5">${lastSeen}</div>
+            </div>
+          </div>`;
+      }).join('');
     }
 
     // Load status
@@ -347,9 +454,7 @@
       $agentDetails.classList.remove('hidden');
 
       // Subscribe to logs
-      if (socket) {
-        socket.emit('subscribe:logs', { agentId: id });
-      }
+      wsSend({ type: 'subscribe:logs', agentId: id });
 
       // Load existing logs
       try {
@@ -417,15 +522,15 @@
 
     document.getElementById('btnRefresh').onclick = () => {
       loadAgents();
+      loadConnectedAgents();
       loadStatus();
     };
 
     document.getElementById('showStopped').onchange = loadAgents;
+    document.getElementById('showOffline').onchange = loadConnectedAgents;
 
     document.getElementById('btnCloseDetails').onclick = () => {
-      if (socket && selectedAgentId) {
-        socket.emit('unsubscribe:logs', { agentId: selectedAgentId });
-      }
+      if (selectedAgentId) wsSend({ type: 'unsubscribe:logs', agentId: selectedAgentId });
       selectedAgentId = null;
       $agentDetails.classList.add('hidden');
     };
@@ -467,6 +572,7 @@
     connectWS();
     loadStatus();
     loadAgents();
+    loadConnectedAgents();
     setInterval(loadStatus, 30000);
   </script>
 </body>
