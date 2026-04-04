@@ -12,6 +12,7 @@ import { initDatabase, getDatabase } from './db/index.js';
 import { AgentManager } from './agents/manager.js';
 import { registerApiRoutes } from './api/routes.js';
 import { registerWebSocket } from './ws/index.js';
+import { loadKeyPair } from './manifest.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -77,6 +78,13 @@ export async function startServer(options: ServerOptions) {
     });
   }
 
+  // Load RSA key pair (generated during 'diragent init')
+  const keysDir = join(options.dataDir, 'keys');
+  const keys = loadKeyPair(keysDir);
+  if (!keys) {
+    logger.warn('No RSA keys found in %s — manifests will be unsigned. Run "diragent init" to generate keys.', keysDir);
+  }
+
   // Initialize agent manager
   agentManager = new AgentManager({
     dataDir: options.dataDir,
@@ -84,17 +92,19 @@ export async function startServer(options: ServerOptions) {
     logger,
   });
 
+  // WebSocket must be registered before routes so pushManifest is available
+  const { pushManifest } = registerWebSocket(server, {
+    config,
+    agentManager,
+    privateKey: keys?.privateKey ?? null,
+  });
+
   // Register API routes
   registerApiRoutes(server, {
     config,
     agentManager,
     startTime,
-  });
-
-  // Register WebSocket handlers
-  registerWebSocket(server, {
-    config,
-    agentManager,
+    pushManifest,
   });
 
   // Health check

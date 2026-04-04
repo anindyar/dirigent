@@ -122,6 +122,11 @@ export function initDatabase(path: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_agent_permissions_tool_id ON agent_permissions(tool_id);
   `);
 
+  // Migrations for columns added after initial release
+  try {
+    db.exec("ALTER TABLE connected_agents ADD COLUMN manifest_version INTEGER NOT NULL DEFAULT 0");
+  } catch { /* column already exists */ }
+
   seedTools();
 
   return db;
@@ -408,6 +413,23 @@ export function getConnectedAgentStats(): { total: number; online: number; idle:
     idle: row.idle ?? 0,
     offline: row.offline ?? 0,
   };
+}
+
+// ── Manifest version tracking ─────────────────────────────────────────────────
+
+export function getManifestVersion(agentId: string): number {
+  const row = db!.prepare(
+    'SELECT manifest_version FROM connected_agents WHERE id = ?',
+  ).get(agentId) as { manifest_version: number } | undefined;
+  return row?.manifest_version ?? 0;
+}
+
+/** Increments the manifest version and returns the new value. */
+export function incrementManifestVersion(agentId: string): number {
+  db!.prepare(`
+    UPDATE connected_agents SET manifest_version = manifest_version + 1 WHERE id = ?
+  `).run(agentId);
+  return getManifestVersion(agentId);
 }
 
 // ── Tool Catalog ─────────────────────────────────────────────────────────────

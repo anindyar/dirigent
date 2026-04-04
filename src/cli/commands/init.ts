@@ -4,6 +4,7 @@ import * as readline from 'readline';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { nanoid } from 'nanoid';
+import { generateKeyPair, saveKeyPair } from '../../server/manifest.js';
 
 async function prompt(question: string, defaultValue?: string): Promise<string> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -109,6 +110,7 @@ export async function initCommand(options: InitOptions) {
       join(dataDir, 'logs'),
       join(dataDir, 'agents'),
       join(dataDir, 'workspaces'),
+      join(dataDir, 'keys'),
     ];
 
     for (const dir of dirs) {
@@ -118,6 +120,10 @@ export async function initCommand(options: InitOptions) {
     // Write config
     writeFileSync(configPath, JSON.stringify(config, null, 2));
 
+    // Generate RSA key pair for manifest signing
+    const keys = generateKeyPair();
+    saveKeyPair(join(dataDir, 'keys'), keys);
+
     // Create .gitignore
     writeFileSync(
       join(dataDir, '.gitignore'),
@@ -126,6 +132,7 @@ data/
 logs/
 agents/
 workspaces/
+keys/
 *.db
 *.db-journal
 `
@@ -138,6 +145,7 @@ workspaces/
     console.log(`   ${chalk.cyan('Config:')} ${configPath}`);
     console.log(`   ${chalk.cyan('Port:')} ${config.server.port}`);
     console.log(`   ${chalk.cyan('Auth:')} ${config.auth.enabled ? 'Enabled' : 'Disabled'}`);
+    console.log(`   ${chalk.cyan('Keys:')} ${join(dataDir, 'keys')} (RSA-2048, manifest signing)`);
 
     if (config.auth.enabled) {
       console.log(chalk.yellow('\n⚠️  Save your admin token (shown only once):'));

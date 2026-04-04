@@ -25,10 +25,11 @@ interface RouteOptions {
   config: DirigentConfig;
   agentManager: AgentManager;
   startTime: number;
+  pushManifest: (agentId: string) => void;
 }
 
 export function registerApiRoutes(server: FastifyInstance, options: RouteOptions) {
-  const { config, agentManager, startTime } = options;
+  const { config, agentManager, startTime, pushManifest } = options;
 
   // Auth middleware
   server.addHook('onRequest', async (request, reply) => {
@@ -329,6 +330,8 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
       { access_level, scope_override, expires_at },
     );
 
+    pushManifest(agentId);
+
     reply.code(existing ? 200 : 201).send({ permission });
   });
 
@@ -349,6 +352,7 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
 
       revokePermission(agentId, toolId);
       audit('permission.revoked', 'admin', 'agent_permission', `${agentId}:${toolId}`, { tool_id: toolId });
+      pushManifest(agentId);
       return { ok: true };
     },
   );

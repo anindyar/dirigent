@@ -8,12 +8,15 @@ import {
   updateConnectedAgentStatus,
   markStaleAgentsOffline,
   getConnectedAgent,
+  incrementManifestVersion,
   audit,
 } from '../db/index.js';
+import { buildManifest } from '../manifest.js';
 
 interface WSOptions {
   config: DirigentConfig;
   agentManager: AgentManager;
+  privateKey: string | null;
 }
 
 interface Client {
@@ -29,8 +32,13 @@ const AGENT_TIMEOUT_MS = 60_000;
 // How often we sweep for stale agents (ms)
 const STALE_SWEEP_INTERVAL_MS = 30_000;
 
-export function registerWebSocket(server: FastifyInstance, options: WSOptions) {
-  const { config, agentManager } = options;
+export interface WSRegistry {
+  /** Push an updated manifest to a connected agent (called after permission changes). */
+  pushManifest: (agentId: string) => void;
+}
+
+export function registerWebSocket(server: FastifyInstance, options: WSOptions): WSRegistry {
+  const { config, agentManager, privateKey } = options;
   const clients: Map<string, Client> = new Map();
 
   // WebSocket route
@@ -74,12 +82,7 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions) {
         clients.delete(clientId);
       });
 
-      // Send welcome
-      send(ws, {
-        type: 'welcome',
-        clientId,
-        authenticated: client.authenticated,
-      });
+      send(ws, { type: 'welcome', clientId, authenticated: client.authenticated });
     });
   });
 
@@ -106,11 +109,8 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions) {
       if (client.agentId) {
         const status: 'online' | 'idle' = msg.status === 'idle' ? 'idle' : 'online';
         updateConnectedAgentHeartbeat(client.agentId, status);
-        // Propagate status change to dashboard subscribers
         const agent = getConnectedAgent(client.agentId);
-        if (agent) {
-          broadcast('agents', { type: 'agent:heartbeat', agent });
-        }
+        if (agent) broadcast('agents', { type: 'agent:heartbeat', agent });
       }
       send(client.ws, { type: 'pong', ts: Date.now() });
       return;
@@ -162,8 +162,7 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions) {
       return;
     }
 
-    // If another client is registered with the same agent id, mark the old
-    // connection as replaced (it will be cleaned up on its own close event).
+    // Displace any existing connection for the same agent id
     for (const [otherId, other] of clients) {
       if (otherId !== clientId && other.agentId === data.id) {
         other.agentId = undefined;
@@ -179,7 +178,6 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions) {
     });
 
     client.agentId = data.id;
-    // Agents are auto-subscribed to their own control channel
     client.subscriptions.add(`agent:${data.id}`);
 
     audit('agent.connected', data.id, 'connected_agent', data.id, {
@@ -192,11 +190,30 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions) {
     const stored = getConnectedAgent(data.id);
     broadcast('agents', { type: 'agent:connected', agent: stored });
 
-    // Respond with confirmation (manifest placeholder for Phase 4)
-    send(client.ws, {
-      type: 'registered',
-      agentId: data.id,
-      manifest: {},
+    // Build and send the initial manifest
+    const version = incrementManifestVersion(data.id);
+    const manifest = buildManifest(data.id, version, privateKey);
+    send(client.ws, { type: 'registered', agentId: data.id, manifest });
+  }
+
+  // ── Manifest push (called by API after permission changes) ───────────────────
+  function pushManifest(agentId: string): void {
+    const version = incrementManifestVersion(agentId);
+    const manifest = buildManifest(agentId, version, privateKey);
+
+    // Find the agent's WS connection
+    for (const client of clients.values()) {
+      if (client.agentId === agentId) {
+        send(client.ws, { type: 'manifest:update', manifest });
+        break;
+      }
+    }
+
+    // Always broadcast the new version to dashboard subscribers
+    broadcast('agents', {
+      type: 'agent:manifest_updated',
+      agentId,
+      manifestVersion: version,
     });
   }
 
@@ -230,7 +247,6 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions) {
     }
   }, STALE_SWEEP_INTERVAL_MS);
 
-  // Clean up interval when server closes
   server.addHook('onClose', async () => {
     clearInterval(sweepInterval);
   });
@@ -266,4 +282,6 @@ export function registerWebSocket(server: FastifyInstance, options: WSOptions) {
       error: agent.error,
     };
   }
+
+  return { pushManifest };
 }
