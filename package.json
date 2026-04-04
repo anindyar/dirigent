@@ -1,6 +1,6 @@
 {
   "name": "diragent",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "AI Agent Orchestration Platform - Enterprise-grade orchestration for AI coding agents",
   "author": "Anindya Roy <anindya@anindya.me>",
   "license": "Apache-2.0",
