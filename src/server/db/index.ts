@@ -115,6 +115,9 @@ export function initDatabase(path: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
     CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_actor ON audit_log(actor);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_target_id ON audit_log(target_id);
     CREATE INDEX IF NOT EXISTS idx_connected_agents_status ON connected_agents(status);
     CREATE INDEX IF NOT EXISTS idx_connected_agents_last_seen ON connected_agents(last_seen);
     CREATE INDEX IF NOT EXISTS idx_tools_risk_level ON tools(risk_level);
@@ -294,12 +297,73 @@ export function getLogs(agentId: string, limit = 100) {
 }
 
 export function audit(action: string, actor: string | null, targetType: string | null, targetId: string | null, details?: object) {
-  const stmt = db!.prepare(`
+  db!.prepare(`
     INSERT INTO audit_log (action, actor, target_type, target_id, details)
     VALUES (?, ?, ?, ?, ?)
-  `);
+  `).run(action, actor, targetType, targetId, details ? JSON.stringify(details) : null);
+}
 
-  stmt.run(action, actor, targetType, targetId, details ? JSON.stringify(details) : null);
+export interface AuditFilter {
+  /** Match actor = agent_id OR target_id = agent_id OR target_id starts with agent_id + ':' */
+  agent_id?: string;
+  action?: string;
+  target_type?: string;
+  target_id?: string;
+  from?: number;   // inclusive, unix ms
+  to?: number;     // inclusive, unix ms
+  limit?: number;
+  offset?: number;
+}
+
+export interface AuditRow {
+  id: number;
+  action: string;
+  actor: string | null;
+  target_type: string | null;
+  target_id: string | null;
+  details: object | null;
+  timestamp: number;
+}
+
+export interface AuditPage {
+  logs: AuditRow[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export function queryAuditLog(filter: AuditFilter = {}): AuditPage {
+  const { agent_id, action, target_type, target_id, from, to } = filter;
+  const limit = Math.min(filter.limit ?? 100, 1000);
+  const offset = filter.offset ?? 0;
+
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (agent_id) {
+    conditions.push('(actor = ? OR target_id = ? OR target_id LIKE ?)');
+    params.push(agent_id, agent_id, `${agent_id}:%`);
+  }
+  if (action)      { conditions.push('action = ?');      params.push(action); }
+  if (target_type) { conditions.push('target_type = ?'); params.push(target_type); }
+  if (target_id)   { conditions.push('target_id = ?');   params.push(target_id); }
+  if (from != null){ conditions.push('timestamp >= ?');  params.push(from); }
+  if (to != null)  { conditions.push('timestamp <= ?');  params.push(to); }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const total = (db!.prepare(`SELECT COUNT(*) as n FROM audit_log ${where}`).get(...params) as { n: number }).n;
+
+  const rows = db!.prepare(
+    `SELECT * FROM audit_log ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+  ).all(...params, limit, offset) as any[];
+
+  return {
+    logs: rows.map((r) => ({ ...r, details: r.details ? JSON.parse(r.details) : null })),
+    total,
+    limit,
+    offset,
+  };
 }
 
 // ── Connected Agents (self-registered) ──────────────────────────────────────

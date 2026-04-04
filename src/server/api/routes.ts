@@ -17,8 +17,10 @@ import {
   getPermission,
   grantPermission,
   revokePermission,
+  queryAuditLog,
   type RiskLevel,
   type AccessLevel,
+  type AuditRow,
 } from '../db/index.js';
 
 interface RouteOptions {
@@ -444,8 +446,63 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
 
   // ── Audit log ─────────────────────────────────────────────────────────────────
 
-  server.get<{ Querystring: { limit?: string } }>('/api/audit', async (request) => {
-    // TODO: Implement audit log retrieval
-    return { logs: [] };
+  type AuditQuerystring = {
+    agent_id?: string;
+    action?: string;
+    target_type?: string;
+    target_id?: string;
+    from?: string;
+    to?: string;
+    limit?: string;
+    offset?: string;
+  };
+
+  function parseAuditFilter(q: AuditQuerystring) {
+    return {
+      agent_id:    q.agent_id    || undefined,
+      action:      q.action      || undefined,
+      target_type: q.target_type || undefined,
+      target_id:   q.target_id   || undefined,
+      from:        q.from  ? parseInt(q.from)   : undefined,
+      to:          q.to    ? parseInt(q.to)     : undefined,
+      limit:       q.limit ? parseInt(q.limit)  : 100,
+      offset:      q.offset? parseInt(q.offset) : 0,
+    };
+  }
+
+  // Query audit log with filters + pagination
+  server.get<{ Querystring: AuditQuerystring }>('/api/audit', async (request) => {
+    const filter = parseAuditFilter(request.query);
+    const page = queryAuditLog(filter);
+    return page;
+  });
+
+  // CSV export
+  server.get<{ Querystring: AuditQuerystring }>('/api/audit/export', async (request, reply) => {
+    // No pagination cap for export — fetch up to 100k rows
+    const filter = { ...parseAuditFilter(request.query), limit: 100_000, offset: 0 };
+    const { logs } = queryAuditLog(filter);
+
+    const escape = (v: any): string => {
+      if (v == null) return '';
+      const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      // RFC 4180: wrap in quotes if contains comma, quote, or newline
+      return /[,"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const header = 'id,timestamp,action,actor,target_type,target_id,details';
+    const rows = logs.map((r: AuditRow) =>
+      [r.id, r.timestamp, r.action, r.actor, r.target_type, r.target_id, r.details]
+        .map(escape)
+        .join(','),
+    );
+
+    const csv = [header, ...rows].join('\r\n');
+    const filename = `dirigent-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+
+    reply
+      .header('Content-Type', 'text/csv; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="${filename}"`)
+      .send(csv);
   });
 }
