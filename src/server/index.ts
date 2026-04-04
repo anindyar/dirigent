@@ -68,7 +68,8 @@ export async function startServer(options: ServerOptions) {
   await server.register(fastifyWebsocket);
 
   // Serve dashboard static files
-  const dashboardPath = join(__dirname, '..', 'dashboard', 'dist');
+  // From dist/server/ we need to go up 2 levels to package root, then into dashboard/dist
+  const dashboardPath = join(__dirname, '..', '..', 'dashboard', 'dist');
   if (existsSync(dashboardPath)) {
     await server.register(fastifyStatic, {
       root: dashboardPath,
