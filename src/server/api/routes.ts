@@ -1,7 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { validateAuth, DirigentConfig } from '../config.js';
 import { AgentManager } from '../agents/manager.js';
-import { getAgents, audit } from '../db/index.js';
+import {
+  getAgents,
+  audit,
+  getConnectedAgents,
+  getConnectedAgent,
+  getConnectedAgentStats,
+  updateConnectedAgentStatus,
+} from '../db/index.js';
 
 interface RouteOptions {
   config: DirigentConfig;
@@ -33,14 +40,15 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
 
   // Status
   server.get('/api/status', async () => {
-    const stats = agentManager.getStats();
+    const spawnedStats = agentManager.getStats();
+    const connectedStats = getConnectedAgentStats();
     const agents = agentManager.list(false);
 
     return {
       status: 'ok',
       uptime: Math.floor((Date.now() - startTime) / 1000),
       agents: {
-        ...stats,
+        ...spawnedStats,
         list: agents.map((a) => ({
           id: a.id,
           name: a.name,
@@ -50,6 +58,7 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
           currentTask: a.currentTask,
         })),
       },
+      connectedAgents: connectedStats,
     };
   });
 
@@ -216,7 +225,39 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
     };
   });
 
-  // Audit log
+  // ── Connected (self-registered) agents ───────────────────────────────────────
+
+  // List connected agents
+  server.get<{ Querystring: { all?: string } }>('/api/agents/connected', async (request) => {
+    const includeOffline = request.query.all === 'true';
+    const agents = getConnectedAgents(includeOffline);
+    return { agents };
+  });
+
+  // Get single connected agent
+  server.get<{ Params: { id: string } }>('/api/agents/connected/:id', async (request, reply) => {
+    const agent = getConnectedAgent(request.params.id);
+    if (!agent) {
+      reply.code(404).send({ error: 'Agent not found' });
+      return;
+    }
+    return { agent };
+  });
+
+  // Manually mark a connected agent offline (deregister)
+  server.delete<{ Params: { id: string } }>('/api/agents/connected/:id', async (request, reply) => {
+    const agent = getConnectedAgent(request.params.id);
+    if (!agent) {
+      reply.code(404).send({ error: 'Agent not found' });
+      return;
+    }
+    updateConnectedAgentStatus(request.params.id, 'offline');
+    audit('agent.deregistered', 'admin', 'connected_agent', request.params.id, {});
+    return { ok: true };
+  });
+
+  // ── Audit log ─────────────────────────────────────────────────────────────────
+
   server.get<{ Querystring: { limit?: string } }>('/api/audit', async (request) => {
     // TODO: Implement audit log retrieval
     return { logs: [] };
