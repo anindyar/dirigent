@@ -13,7 +13,12 @@ import {
   createTool,
   updateTool,
   deleteTool,
+  getAgentPermissions,
+  getPermission,
+  grantPermission,
+  revokePermission,
   type RiskLevel,
+  type AccessLevel,
 } from '../db/index.js';
 
 interface RouteOptions {
@@ -261,6 +266,92 @@ export function registerApiRoutes(server: FastifyInstance, options: RouteOptions
     audit('agent.deregistered', 'admin', 'connected_agent', request.params.id, {});
     return { ok: true };
   });
+
+  // ── Permission Matrix ─────────────────────────────────────────────────────────
+
+  const VALID_ACCESS_LEVELS: AccessLevel[] = ['none', 'read', 'full'];
+
+  // List all permissions for an agent (joined with tool metadata)
+  server.get<{ Params: { id: string } }>(
+    '/api/agents/connected/:id/permissions',
+    async (request, reply) => {
+      if (!getConnectedAgent(request.params.id)) {
+        reply.code(404).send({ error: 'Agent not found' });
+        return;
+      }
+      return { permissions: getAgentPermissions(request.params.id) };
+    },
+  );
+
+  // Grant (or update) a tool permission for an agent
+  server.post<{
+    Params: { id: string };
+    Body: {
+      tool_id: string;
+      access_level: AccessLevel;
+      scope_override?: object;
+      granted_by?: string;
+      expires_at?: number;
+    };
+  }>('/api/agents/connected/:id/permissions', async (request, reply) => {
+    const agentId = request.params.id;
+    const { tool_id, access_level, scope_override, granted_by, expires_at } = request.body;
+
+    if (!getConnectedAgent(agentId)) {
+      reply.code(404).send({ error: 'Agent not found' });
+      return;
+    }
+    if (!tool_id || !access_level) {
+      reply.code(400).send({ error: 'tool_id and access_level are required' });
+      return;
+    }
+    if (!VALID_ACCESS_LEVELS.includes(access_level)) {
+      reply.code(400).send({ error: `access_level must be one of: ${VALID_ACCESS_LEVELS.join(', ')}` });
+      return;
+    }
+    if (!getTool(tool_id)) {
+      reply.code(404).send({ error: `Tool '${tool_id}' not found` });
+      return;
+    }
+    if (expires_at !== undefined && (typeof expires_at !== 'number' || expires_at <= Date.now())) {
+      reply.code(400).send({ error: 'expires_at must be a future unix millisecond timestamp' });
+      return;
+    }
+
+    const existing = getPermission(agentId, tool_id);
+    const permission = grantPermission({ agent_id: agentId, tool_id, access_level, scope_override, granted_by, expires_at });
+
+    audit(
+      existing ? 'permission.updated' : 'permission.granted',
+      granted_by ?? 'admin',
+      'agent_permission',
+      `${agentId}:${tool_id}`,
+      { access_level, scope_override, expires_at },
+    );
+
+    reply.code(existing ? 200 : 201).send({ permission });
+  });
+
+  // Revoke a tool permission from an agent
+  server.delete<{ Params: { id: string; toolId: string } }>(
+    '/api/agents/connected/:id/permissions/:toolId',
+    async (request, reply) => {
+      const { id: agentId, toolId } = request.params;
+
+      if (!getConnectedAgent(agentId)) {
+        reply.code(404).send({ error: 'Agent not found' });
+        return;
+      }
+      if (!getPermission(agentId, toolId)) {
+        reply.code(404).send({ error: 'Permission not found' });
+        return;
+      }
+
+      revokePermission(agentId, toolId);
+      audit('permission.revoked', 'admin', 'agent_permission', `${agentId}:${toolId}`, { tool_id: toolId });
+      return { ok: true };
+    },
+  );
 
   // ── Tool Catalog ──────────────────────────────────────────────────────────────
 

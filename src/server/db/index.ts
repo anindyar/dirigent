@@ -95,6 +95,20 @@ export function initDatabase(path: string): Database.Database {
       updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     );
 
+    -- Permission matrix (which tools each connected agent may use)
+    CREATE TABLE IF NOT EXISTS agent_permissions (
+      agent_id TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      access_level TEXT NOT NULL DEFAULT 'full',
+      scope_override TEXT,
+      granted_by TEXT NOT NULL DEFAULT 'admin',
+      granted_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+      expires_at INTEGER,
+      PRIMARY KEY (agent_id, tool_id),
+      FOREIGN KEY (agent_id) REFERENCES connected_agents(id),
+      FOREIGN KEY (tool_id) REFERENCES tools(id)
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_agent_logs_agent_id ON agent_logs(agent_id);
     CREATE INDEX IF NOT EXISTS idx_agent_logs_timestamp ON agent_logs(timestamp);
@@ -104,6 +118,8 @@ export function initDatabase(path: string): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_connected_agents_status ON connected_agents(status);
     CREATE INDEX IF NOT EXISTS idx_connected_agents_last_seen ON connected_agents(last_seen);
     CREATE INDEX IF NOT EXISTS idx_tools_risk_level ON tools(risk_level);
+    CREATE INDEX IF NOT EXISTS idx_agent_permissions_agent_id ON agent_permissions(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_agent_permissions_tool_id ON agent_permissions(tool_id);
   `);
 
   seedTools();
@@ -472,4 +488,117 @@ export function updateTool(
 export function deleteTool(id: string): boolean {
   const result = db!.prepare('DELETE FROM tools WHERE id = ?').run(id);
   return result.changes > 0;
+}
+
+// ── Permission Matrix ─────────────────────────────────────────────────────────
+
+export type AccessLevel = 'none' | 'read' | 'full';
+
+export interface PermissionRow {
+  agent_id: string;
+  tool_id: string;
+  access_level: AccessLevel;
+  scope_override: object | null;
+  granted_by: string;
+  granted_at: number;
+  expires_at: number | null;
+}
+
+// Joined view: permission row merged with tool metadata
+export interface PermissionWithTool extends PermissionRow {
+  tool_name: string;
+  tool_description: string;
+  tool_risk_level: RiskLevel;
+  tool_default_scope: object | null;
+}
+
+function parsePermission(row: any): PermissionRow {
+  return {
+    ...row,
+    scope_override: row.scope_override ? JSON.parse(row.scope_override) : null,
+    expires_at: row.expires_at ?? null,
+  };
+}
+
+function parsePermissionWithTool(row: any): PermissionWithTool {
+  return {
+    ...parsePermission(row),
+    tool_name: row.tool_name,
+    tool_description: row.tool_description,
+    tool_risk_level: row.tool_risk_level,
+    tool_default_scope: row.tool_default_scope ? JSON.parse(row.tool_default_scope) : null,
+  };
+}
+
+export function getAgentPermissions(agentId: string): PermissionWithTool[] {
+  const rows = db!.prepare(`
+    SELECT
+      ap.*,
+      t.name  AS tool_name,
+      t.description AS tool_description,
+      t.risk_level  AS tool_risk_level,
+      t.default_scope AS tool_default_scope
+    FROM agent_permissions ap
+    JOIN tools t ON t.id = ap.tool_id
+    WHERE ap.agent_id = ?
+    ORDER BY t.risk_level, t.id
+  `).all(agentId) as any[];
+  return rows.map(parsePermissionWithTool);
+}
+
+export function getPermission(agentId: string, toolId: string): PermissionRow | null {
+  const row = db!.prepare(
+    'SELECT * FROM agent_permissions WHERE agent_id = ? AND tool_id = ?',
+  ).get(agentId, toolId) as any;
+  return row ? parsePermission(row) : null;
+}
+
+export function grantPermission(perm: {
+  agent_id: string;
+  tool_id: string;
+  access_level: AccessLevel;
+  scope_override?: object;
+  granted_by?: string;
+  expires_at?: number;
+}): PermissionRow {
+  db!.prepare(`
+    INSERT INTO agent_permissions (agent_id, tool_id, access_level, scope_override, granted_by, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(agent_id, tool_id) DO UPDATE SET
+      access_level   = excluded.access_level,
+      scope_override = excluded.scope_override,
+      granted_by     = excluded.granted_by,
+      granted_at     = (unixepoch() * 1000),
+      expires_at     = excluded.expires_at
+  `).run(
+    perm.agent_id,
+    perm.tool_id,
+    perm.access_level,
+    perm.scope_override ? JSON.stringify(perm.scope_override) : null,
+    perm.granted_by ?? 'admin',
+    perm.expires_at ?? null,
+  );
+  return getPermission(perm.agent_id, perm.tool_id)!;
+}
+
+export function revokePermission(agentId: string, toolId: string): boolean {
+  const result = db!.prepare(
+    'DELETE FROM agent_permissions WHERE agent_id = ? AND tool_id = ?',
+  ).run(agentId, toolId);
+  return result.changes > 0;
+}
+
+export function revokeAllPermissions(agentId: string): number {
+  const result = db!.prepare(
+    'DELETE FROM agent_permissions WHERE agent_id = ?',
+  ).run(agentId);
+  return result.changes;
+}
+
+/** Returns only non-expired permissions with access_level != 'none'. */
+export function getEffectivePermissions(agentId: string): PermissionWithTool[] {
+  const now = Date.now();
+  return getAgentPermissions(agentId).filter(
+    (p) => p.access_level !== 'none' && (p.expires_at === null || p.expires_at > now),
+  );
 }
